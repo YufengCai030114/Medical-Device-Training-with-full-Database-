@@ -1,0 +1,290 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Medical Training – Link Editor (US04)</title>
+    <style>
+        body{font-family:ui-sans-serif,system-ui,Arial;background:#fafafa;margin:0;}
+        header{display:flex;justify-content:space-between;align-items:center;
+                padding:16px 20px;border-bottom:1px solid #eee;background:#fff;}
+        .status{font-size:12px;color:#555;}
+        .back{font-size:13px;text-decoration:none;border:1px solid #e5e7eb;
+              padding:6px 10px;border-radius:8px;background:#fafafa;}
+        .wrap{padding:16px;max-width:960px;margin:0 auto;}
+        .card{background:#fff;border:1px solid #eee;border-radius:12px;
+              box-shadow:0 1px 2px rgba(0,0,0,.03);padding:16px 18px;margin-bottom:16px;}
+        h2{margin:0 0 8px;}
+        .muted{font-size:13px;color:#666;}
+        label{font-size:14px;margin-right:8px;}
+        select,button{padding:6px 10px;border-radius:8px;border:1px solid #e5e7eb;
+                      font-size:14px;background:#fff;cursor:pointer;}
+        button.primary{background:#2563eb;color:#fff;border-color:#2563eb;}
+        button:disabled{opacity:.6;cursor:not-allowed;}
+        ul{padding-left:18px;margin:8px 0;}
+        li{font-size:14px;margin:2px 0;}
+        .hint{font-size:12px;color:#777;margin-top:6px;}
+    </style>
+</head>
+<body>
+<header>
+    <div>
+        <strong>Medical Training – Link editor (US04)</strong><br/>
+        <span class="status" id="status">Connecting to PostgREST…</span>
+    </div>
+    <a href="index.html" class="back">← Back to main UI</a>
+</header>
+
+<div class="wrap">
+
+    <!-- 1. 选择 Risk -->
+    <section class="card">
+        <h2>1. Select Risk</h2>
+        <p class="muted">First choose a risk. The other sections depend on this selection.</p>
+        <label for="riskSelect">Risk:</label>
+        <select id="riskSelect"></select>
+        <button id="btnRiskReload">Reload</button>
+    </section>
+
+    <!-- 2. Risk ↔ Skill -->
+    <section class="card">
+        <h2>2. Link Risk ↔ Skills</h2>
+
+        <p class="muted"><strong>Linked skills</strong></p>
+        <ul id="riskSkills">
+            <li class="muted">Choose a risk above.</li>
+        </ul>
+
+        <p class="muted" style="margin-top:10px;"><strong>Add new skill link</strong></p>
+        <label for="skillSelect">Skill:</label>
+        <select id="skillSelect"></select>
+        <button id="btnAddSkill" class="primary" disabled>Add skill link</button>
+
+        <div class="hint">
+            This writes into table <code>risk_skill (risk_id, skill_id)</code>.
+            Duplicate links are ignored by the database (unique primary key).
+        </div>
+    </section>
+
+    <!-- 3. Skill ↔ Training Material -->
+    <section class="card">
+        <h2>3. Link Skill ↔ Training Materials</h2>
+
+        <p class="muted">First choose a linked skill of the current risk, then you can add/remove
+            training materials for that skill.</p>
+
+        <label for="skillForMatSelect">Skill:</label>
+        <select id="skillForMatSelect"></select>
+
+        <p class="muted" style="margin-top:10px;"><strong>Materials linked to this skill</strong></p>
+        <ul id="skillMaterials">
+            <li class="muted">Choose a skill above.</li>
+        </ul>
+
+        <p class="muted" style="margin-top:10px;"><strong>Add new material link</strong></p>
+        <label for="matSelect">Training material:</label>
+        <select id="matSelect"></select>
+        <button id="btnAddMat" class="primary" disabled>Add material link</button>
+
+        <div class="hint">
+            Writes into table <code>skill_training (skill_id, training_material_id)</code>.
+        </div>
+    </section>
+
+    <section class="card">
+        <p class="hint">
+            Hint for report / documentation:<br/>
+            – This page implements user story <strong>US04 “Link risks with skills and trainings”</strong>.<br/>
+            – Risk–Skill links use PostgREST endpoint <code>/risk_skill</code>.<br/>
+            – Skill–Material links use PostgREST endpoint <code>/skill_training</code>.
+        </p>
+    </section>
+
+</div>
+
+<script>
+    // 和主界面一致：PostgREST 在 3000 端口
+    const API_BASE = (path) => `http://localhost:3000/${path}`;
+    const $ = (s) => document.querySelector(s);
+
+    const riskSelect   = $('#riskSelect');
+    const skillSelect  = $('#skillSelect');
+    const skillForMat  = $('#skillForMatSelect');
+    const matSelect    = $('#matSelect');
+    const riskSkillsUL = $('#riskSkills');
+    const skillMatsUL  = $('#skillMaterials');
+    const statusEl     = $('#status');
+
+    let allSkills = [];
+    let allMats   = [];
+
+    async function fetchJson(path, options = {}) {
+      const res = await fetch(API_BASE(path), options);
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(res.status + ' ' + text);
+      }
+      return res.json();
+    }
+
+    // ---- 加载下拉数据 ----
+    async function loadRisks() {
+      statusEl.textContent = 'Loading risks…';
+      const risks = await fetchJson('risk?select=id,code,title&order=code');
+      riskSelect.innerHTML = risks.map(r =>
+        `<option value="${r.id}">${r.code} – ${r.title}</option>`
+      ).join('');
+      if (!risks.length) {
+        riskSelect.innerHTML = '<option value="">(no risks)</option>';
+      }
+      statusEl.textContent = 'Connected to PostgREST ✓';
+      await onRiskChange(); // 选中第一个 risk 后刷新下面内容
+    }
+
+    async function loadSkillsAndMats() {
+      const [skills, mats] = await Promise.all([
+        fetchJson('skill?select=id,code,name&order=code'),
+        fetchJson('training_material?select=id,code,title&order=code')
+      ]);
+      allSkills = skills;
+      allMats   = mats;
+
+      skillSelect.innerHTML = skills.map(s =>
+        `<option value="${s.id}">${s.code} – ${s.name}</option>`
+      ).join('');
+      matSelect.innerHTML = mats.map(m =>
+        `<option value="${m.id}">${m.code} – ${m.title}</option>`
+      ).join('');
+
+      $('#btnAddSkill').disabled = !skills.length;
+      $('#btnAddMat').disabled   = !mats.length;
+    }
+
+    // ---- 根据当前 risk 显示已链接的 skills ----
+    async function onRiskChange() {
+      const riskId = Number(riskSelect.value);
+      if (!riskId) {
+        riskSkillsUL.innerHTML = '<li class="muted">Choose a risk above.</li>';
+        skillForMat.innerHTML = '';
+        skillMatsUL.innerHTML = '<li class="muted">Choose a skill above.</li>';
+        return;
+      }
+
+      // 通过 risk_skill 取该 risk 已链接的 skill
+      const links = await fetchJson(
+        `risk_skill?risk_id=eq.${riskId}&select=skill(id,code,name)`
+      );
+      const linkedSkills = links
+        .map(l => l.skill)
+        .filter(Boolean);
+
+      if (!linkedSkills.length) {
+        riskSkillsUL.innerHTML = '<li class="muted">No linked skills yet.</li>';
+      } else {
+        riskSkillsUL.innerHTML = linkedSkills
+          .map(s => `<li>${s.code} – ${s.name}</li>`)
+          .join('');
+      }
+
+      // 这些 linked skills 也作为 Step 3 的下拉
+      skillForMat.innerHTML = linkedSkills
+        .map(s => `<option value="${s.id}">${s.code} – ${s.name}</option>`)
+        .join('');
+      if (!linkedSkills.length) {
+        skillForMat.innerHTML = '<option value="">(no linked skills)</option>';
+        skillMatsUL.innerHTML = '<li class="muted">Add a skill link first.</li>';
+      } else {
+        await onSkillForMatChange();
+      }
+    }
+
+    // ---- 根据当前 skill 显示已链接的 materials ----
+    async function onSkillForMatChange() {
+      const skillId = Number(skillForMat.value);
+      if (!skillId) {
+        skillMatsUL.innerHTML = '<li class="muted">Choose a skill above.</li>';
+        return;
+      }
+      const links = await fetchJson(
+        `skill_training?skill_id=eq.${skillId}&select=training_material(id,code,title)`
+      );
+      const mats = links.map(l => l.training_material).filter(Boolean);
+      if (!mats.length) {
+        skillMatsUL.innerHTML = '<li class="muted">No materials linked yet.</li>';
+      } else {
+        skillMatsUL.innerHTML = mats
+          .map(m => `<li>${m.code} – ${m.title}</li>`)
+          .join('');
+      }
+    }
+
+    // ---- 新增 Risk–Skill link ----
+    async function addSkillLink() {
+      const riskId  = Number(riskSelect.value);
+      const skillId = Number(skillSelect.value);
+      if (!riskId || !skillId) return;
+
+      try {
+        await fetchJson('risk_skill', {
+          method: 'POST',
+          headers: {
+            'Content-Type':'application/json',
+            'Prefer':'return=representation'
+          },
+          body: JSON.stringify({ risk_id: riskId, skill_id: skillId })
+        });
+      } catch (e) {
+        // 如果是重复主键，就给个友好提示
+        if (String(e).includes('duplicate key')) {
+          alert('This risk is already linked to that skill.');
+        } else {
+          alert('Failed to add link: ' + e.message);
+        }
+      }
+      await onRiskChange();
+    }
+
+    // ---- 新增 Skill–Material link ----
+    async function addMatLink() {
+      const skillId = Number(skillForMat.value);
+      const matId   = Number(matSelect.value);
+      if (!skillId || !matId) return;
+
+      try {
+        await fetchJson('skill_training', {
+          method: 'POST',
+          headers: {
+            'Content-Type':'application/json',
+            'Prefer':'return=representation'
+          },
+          body: JSON.stringify({ skill_id: skillId, training_material_id: matId })
+        });
+      } catch (e) {
+        if (String(e).includes('duplicate key')) {
+          alert('This material is already linked to that skill.');
+        } else {
+          alert('Failed to add link: ' + e.message);
+        }
+      }
+      await onSkillForMatChange();
+    }
+
+    // 事件绑定
+    $('#btnRiskReload').onclick = loadRisks;
+    riskSelect.onchange        = onRiskChange;
+    skillForMat.onchange       = onSkillForMatChange;
+    $('#btnAddSkill').onclick  = addSkillLink;
+    $('#btnAddMat').onclick    = addMatLink;
+
+    // 页面初始化
+    (async function init(){
+      try {
+        await Promise.all([loadRisks(), loadSkillsAndMats()]);
+        statusEl.textContent = 'Connected to PostgREST ✓';
+      } catch (e) {
+        statusEl.textContent = 'Connection failed: ' + e.message;
+      }
+    })();
+</script>
+</body>
+</html>

@@ -1,0 +1,48 @@
+
+version: "3.9"
+services:
+  db:
+    image: postgres:16
+    container_name: medtrain_db
+    environment:
+      POSTGRES_USER: demo
+      POSTGRES_PASSWORD: demo
+      POSTGRES_DB: medtrain
+    ports:
+      - "5432:5432"
+    volumes:
+      - db-data:/var/lib/postgresql/data
+      - ./db-init:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U demo -d medtrain"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  postgrest:
+    image: postgrest/postgrest:v12.0.2
+    container_name: medtrain_rest
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PGRST_DB_URI: postgres://demo:demo@db:5432/medtrain
+      PGRST_DB_SCHEMA: public
+      PGRST_DB_ANON_ROLE: web_anon
+      PGRST_SERVER_PORT: "3000"
+      PGRST_OPENAPI_SERVER_PROXY_URI: http://localhost:3000
+      PGRST_SERVER_CORS_ORIGINS: "*"
+    ports:
+      - "3000:3000"
+
+  adminer:
+    image: adminer
+    container_name: medtrain_adminer
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "8080:8080"
+
+volumes:
+  db-data:
