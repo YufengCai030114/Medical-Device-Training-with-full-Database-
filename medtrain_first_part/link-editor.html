@@ -33,6 +33,12 @@
     </style>
 </head>
 <body>
+<header style="display:flex;align-items:center;gap:12px;padding:10px 16px;border-bottom:1px solid #eee;font-family:system-ui,Arial;background:#ffffff;">
+    <button onclick="goBack()"
+            style="padding:6px 10px;border-radius:8px;border:1px solid #ddd;background:#f5f5f5;cursor:pointer;">
+        ← Back
+    </button>
+</header>
 <header>
     <div>
         <h1>Medical Training – Link editor</h1>
@@ -41,11 +47,9 @@
         </div>
     </div>
     <div style="font-size:12px;">
-        <a href="simple-interface-prototype-fetch.html">← Back to main UI</a><br/>
         <span id="status" style="color:#16a34a;">Connecting…</span>
     </div>
 </header>
-
 <main>
     <!-- 1. SELECT RISK -->
     <section class="card">
@@ -398,6 +402,9 @@
 
     // initial load
     loadMasterData();
+      function goBack() {
+    window.location.href = 'simple-interface-prototype-fetch.html';
+  }
 </script>
 </body>
 </html>

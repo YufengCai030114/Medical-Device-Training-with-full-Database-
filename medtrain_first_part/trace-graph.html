@@ -1,0 +1,277 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <title>Medical Training – Traceability Graph (US05)</title>
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <style>
+        body{
+          font-family:ui-sans-serif,system-ui,Arial;
+          margin:0;
+          background:#f9fafb;
+        }
+        header{
+          padding:12px 16px;
+          border-bottom:1px solid #e5e7eb;
+          background:#fff;
+          display:flex;
+          justify-content:space-between;
+          align-items:center;
+        }
+        h1{
+          font-size:18px;
+          margin:0;
+        }
+        .status{font-size:12px;color:#6b7280}
+        #legend{
+          padding:8px 16px;
+          font-size:13px;
+          background:#f3f4f6;
+          border-bottom:1px solid #e5e7eb;
+        }
+        .badge{
+          display:inline-flex;
+          align-items:center;
+          gap:4px;
+          padding:2px 8px;
+          border-radius:999px;
+          font-size:12px;
+          margin-right:8px;
+          border:1px solid #e5e7eb;
+          background:#fff;
+        }
+        .dot{
+          width:10px;height:10px;border-radius:999px;
+          display:inline-block;
+        }
+        .dot-risk{background:#ef4444;}      /* red */
+        .dot-skill{background:#3b82f6;}     /* blue */
+        .dot-mat{background:#22c55e;}       /* green */
+        #graph{
+          width:100%;
+          height:calc(100vh - 96px);
+          display:block;
+          background:#ffffff;
+        }
+        .node circle{
+          stroke:#ffffff;
+          stroke-width:1.5px;
+        }
+        .node text{
+          font-size:11px;
+          pointer-events:none;
+        }
+        .link{
+          stroke:#9ca3af;
+          stroke-width:1.2px;
+          opacity:0.8;
+        }
+    </style>
+    <!-- D3.js 从 CDN 加载，无需本地安装 -->
+    <script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
+</head>
+<body>
+<header>
+    <h1>Traceability Graph </h1>
+    <span class="status" id="status">Loading data from PostgREST…</span>
+</header>
+<header style="display:flex;align-items:center;gap:12px;padding:10px 16px;border-bottom:1px solid #eee;font-family:system-ui,Arial;background:#ffffff;">
+    <button onclick="goBack()"
+            style="padding:6px 10px;border-radius:8px;border:1px solid #ddd;background:#f5f5f5;cursor:pointer;">
+        ← Back
+    </button>
+    <h1 style="font-size:18px;margin:0;">Risk Traceability Graph (US05)</h1>
+</header>
+<div id="legend">
+    <span class="badge"><span class="dot dot-risk"></span>Risk</span>
+    <span class="badge"><span class="dot dot-skill"></span>Skill</span>
+    <span class="badge"><span class="dot dot-mat"></span>Training material</span>
+    <span style="margin-left:12px;font-size:12px;color:#6b7280;">
+    Drag nodes to rearrange. Layout shows relations risk ⇄ skill ⇄ material.
+  </span>
+</div>
+
+<svg id="graph"></svg>
+
+<script>
+    // === 配置 API 基础地址（跟你其他页面一样，用 PostgREST 3000 端口） ===
+    const API = (path) => `http://localhost:3000/${path}`;
+    const statusEl = document.getElementById('status');
+
+    async function loadGraphData() {
+      statusEl.textContent = 'Loading risks, skills, materials and links…';
+
+      // 从 PostgREST 拉取节点和边的数据
+      const [
+        risksRes,
+        skillsRes,
+        matsRes,
+        riskSkillRes,
+        skillMatRes
+      ] = await Promise.all([
+        fetch(API('risk?select=id,code,severity')),
+        fetch(API('skill?select=id,code')),
+        fetch(API('training_material?select=id,code')),
+        fetch(API('risk_skill?select=risk_id,skill_id')),
+        fetch(API('skill_training?select=skill_id,training_material_id'))
+      ]);
+
+      if (!risksRes.ok || !skillsRes.ok || !matsRes.ok ||
+          !riskSkillRes.ok || !skillMatRes.ok) {
+        throw new Error('API error (check PostgREST / database)');
+      }
+
+      const [risks, skills, mats, riskSkills, skillMats] =
+        await Promise.all([
+          risksRes.json(),
+          skillsRes.json(),
+          matsRes.json(),
+          riskSkillRes.json(),
+          skillMatRes.json()
+        ]);
+
+      // --- 构造 D3 需要的 nodes / links ---
+
+      const nodes = [];
+      const nodeById = new Map();
+
+      function addNode(type, id, label, extra = {}) {
+        const key = `${type}-${id}`;
+        if (nodeById.has(key)) return nodeById.get(key);
+        const node = { id: key, rawId: id, type, label, ...extra };
+        nodeById.set(key, node);
+        nodes.push(node);
+        return node;
+      }
+
+      risks.forEach(r =>
+        addNode('risk', r.id, r.code || `R${r.id}`, { severity: r.severity })
+      );
+      skills.forEach(s =>
+        addNode('skill', s.id, s.code || `S${s.id}`)
+      );
+      mats.forEach(m =>
+        addNode('mat', m.id, m.code || `TM${m.id}`)
+      );
+
+      const links = [];
+
+      // risk ↔ skill 关系
+      riskSkills.forEach(rs => {
+        links.push({
+          source: `risk-${rs.risk_id}`,
+          target: `skill-${rs.skill_id}`,
+          kind: 'risk-skill'
+        });
+      });
+
+      // skill ↔ training_material 关系
+      skillMats.forEach(sm => {
+        links.push({
+          source: `skill-${sm.skill_id}`,
+          target: `mat-${sm.training_material_id}`,
+          kind: 'skill-mat'
+        });
+      });
+
+      return { nodes, links };
+    }
+
+    function renderGraph({ nodes, links }) {
+      const svg = d3.select('#graph');
+      const width = svg.node().clientWidth || window.innerWidth;
+      const height = svg.node().clientHeight || (window.innerHeight - 96);
+
+      svg
+        .attr('width', width)
+        .attr('height', height);
+
+      // 线
+      const link = svg.append('g')
+        .attr('stroke-linecap', 'round')
+        .selectAll('line')
+        .data(links)
+        .join('line')
+        .attr('class', 'link');
+
+      // 节点 (circle + text 放在一个 <g> 里，可以一起拖动)
+      const node = svg.append('g')
+        .selectAll('g')
+        .data(nodes)
+        .join('g')
+        .attr('class', 'node')
+        .call(
+          d3.drag()
+            .on('start', dragstarted)
+            .on('drag', dragged)
+            .on('end', dragended)
+        );
+
+      node.append('circle')
+        .attr('r', 12)
+        .attr('fill', d => {
+          if (d.type === 'risk') return '#ef4444';
+          if (d.type === 'skill') return '#3b82f6';
+          if (d.type === 'mat')  return '#22c55e';
+          return '#6b7280';
+        });
+
+      node.append('text')
+        .attr('x', 14)
+        .attr('y', 4)
+        .text(d => d.label);
+
+      const simulation = d3.forceSimulation(nodes)
+        .force('link', d3.forceLink(links)
+          .id(d => d.id)
+          .distance(80)
+        )
+        .force('charge', d3.forceManyBody().strength(-200))
+        .force('center', d3.forceCenter(width / 2, height / 2))
+        .on('tick', ticked);
+
+      function ticked() {
+        link
+          .attr('x1', d => d.source.x)
+          .attr('y1', d => d.source.y)
+          .attr('x2', d => d.target.x)
+          .attr('y2', d => d.target.y);
+
+        node.attr('transform', d => `translate(${d.x},${d.y})`);
+      }
+
+      function dragstarted(event, d) {
+        if (!event.active) simulation.alphaTarget(0.3).restart();
+        d.fx = d.x;
+        d.fy = d.y;
+      }
+
+      function dragged(event, d) {
+        d.fx = event.x;
+        d.fy = event.y;
+      }
+
+      function dragended(event, d) {
+        if (!event.active) simulation.alphaTarget(0);
+        d.fx = null;
+        d.fy = null;
+      }
+    }
+
+    (async function init() {
+      try {
+        const data = await loadGraphData();
+        renderGraph(data);
+        statusEl.textContent = 'Graph loaded from /risk, /skill, /training_material, /risk_skill, /skill_training ✓';
+      } catch (e) {
+        console.error(e);
+        statusEl.textContent = 'Failed to load graph: ' + e.message;
+        alert('Error loading graph data. Check if PostgREST is running on localhost:3000.');
+      }
+    })();
+    function goBack() {
+    window.location.href = 'simple-interface-prototype-fetch.html';
+  }
+</script>
+</body>
+</html>
