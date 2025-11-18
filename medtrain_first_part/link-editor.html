@@ -1,0 +1,410 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <title>Link editor – Risks / Skills / Training Materials</title>
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <style>
+        body{font-family:ui-sans-serif,system-ui,Arial;margin:0;background:#f5f5f5;}
+        header{padding:16px 20px;border-bottom:1px solid #e5e7eb;background:#fff;
+          display:flex;justify-content:space-between;align-items:center;}
+        h1{margin:0;font-size:20px;}
+        a{color:#2563eb;text-decoration:none;}
+        main{max-width:960px;margin:24px auto;padding:0 16px 32px;}
+        .card{background:#fff;border-radius:12px;border:1px solid #e5e7eb;
+          padding:16px 18px;margin-bottom:18px;box-shadow:0 1px 2px rgba(0,0,0,.04);}
+        h2{margin:0 0 8px;font-size:18px;}
+        h3{margin:0 0 6px;font-size:16px;}
+        label{font-size:14px;margin-right:6px;}
+        select,button{padding:6px 10px;border-radius:8px;border:1px solid #d1d5db;
+          font-size:14px;background:#fff;cursor:pointer;}
+        button.primary{background:#2563eb;color:#fff;border-color:#2563eb;}
+        button.danger{background:#fee2e2;border-color:#fecaca;color:#b91c1c;}
+        button:disabled{opacity:.6;cursor:not-allowed;}
+        ul{list-style:none;padding-left:0;margin:6px 0 0;}
+        li{display:flex;align-items:center;justify-content:space-between;
+          padding:4px 0;border-bottom:1px dashed #e5e7eb;font-size:14px;}
+        .muted{color:#6b7280;font-size:12px;margin-top:4px;}
+        .pill{display:inline-block;padding:2px 8px;border-radius:999px;
+          background:#eef2ff;font-size:12px;margin-right:4px;}
+        .section-title{font-weight:600;}
+        .row{display:flex;gap:8px;align-items:center;margin:6px 0;}
+        .hint{font-size:12px;color:#6b7280;margin-top:4px;}
+    </style>
+</head>
+<body>
+<header style="display:flex;align-items:center;gap:12px;padding:10px 16px;border-bottom:1px solid #eee;font-family:system-ui,Arial;background:#ffffff;">
+    <button onclick="goBack()"
+            style="padding:6px 10px;border-radius:8px;border:1px solid #ddd;background:#f5f5f5;cursor:pointer;">
+        ← Back
+    </button>
+</header>
+<header>
+    <div>
+        <h1>Medical Training – Link editor</h1>
+        <div style="font-size:12px;color:#6b7280;">
+            Implements <strong>US04</strong>: Link risks with skills and trainings.
+        </div>
+    </div>
+    <div style="font-size:12px;">
+        <span id="status" style="color:#16a34a;">Connecting…</span>
+    </div>
+</header>
+<main>
+    <!-- 1. SELECT RISK -->
+    <section class="card">
+        <h2>1. Select Risk</h2>
+        <div class="row">
+            <label for="riskSelect">Risk:</label>
+            <select id="riskSelect"></select>
+            <button id="btnReloadRisks">Reload</button>
+        </div>
+        <div class="hint">Choose a risk. Sections 2 and 3 will load links for the selected risk.</div>
+    </section>
+
+    <!-- 2. LINK RISK <-> SKILLS -->
+    <section class="card">
+        <h2>2. Link Risk ↔ Skills</h2>
+
+        <h3>Linked skills</h3>
+        <div class="muted" id="linkedSkillsInfo">Choose a risk above.</div>
+        <ul id="linkedSkillList"></ul>
+
+        <h3 style="margin-top:14px;">Add new skill link</h3>
+        <div class="row">
+            <label for="skillAddSelect">Skill:</label>
+            <select id="skillAddSelect"></select>
+            <button class="primary" id="btnAddSkillLink">Add skill link</button>
+        </div>
+        <div class="hint">
+            This writes into table <code>risk_skill</code> (<code>risk_id</code>, <code>skill_id</code>).
+            Delete buttons below will remove rows from that table.
+        </div>
+    </section>
+
+    <!-- 3. LINK SKILL <-> TRAINING MATERIALS -->
+    <section class="card">
+        <h2>3. Link Skill ↔ Training Materials</h2>
+
+        <p class="muted">
+            First choose a linked skill of the current risk. Then you can add / remove training materials for that skill.
+        </p>
+
+        <div class="row">
+            <label for="skillForMatSelect">Skill:</label>
+            <select id="skillForMatSelect"></select>
+        </div>
+
+        <h3>Materials linked to this skill</h3>
+        <div class="muted" id="matInfo">Choose a skill above.</div>
+        <ul id="materialList"></ul>
+
+        <h3 style="margin-top:14px;">Add new material link</h3>
+        <div class="row">
+            <label for="matAddSelect">Training material:</label>
+            <select id="matAddSelect"></select>
+            <button class="primary" id="btnAddMaterialLink">Add material link</button>
+        </div>
+        <div class="hint">
+            This writes into table <code>skill_training</code> (<code>skill_id</code>, <code>training_material_id</code>).
+            Delete buttons below will remove rows from that table.
+        </div>
+    </section>
+
+    <section class="card">
+        <h3>Hint for report / documentation</h3>
+        <ul class="muted">
+            <li>Implements US04 “Link risks with skills and trainings”.</li>
+            <li>Risk–Skill links use PostgREST endpoint <code>/risk_skill</code>.</li>
+            <li>Skill–Material links use PostgREST endpoint <code>/skill_training</code>.</li>
+            <li>Foreign keys enforce that only existing risks / skills / materials can be linked.</li>
+        </ul>
+    </section>
+</main>
+
+<script>
+    const API_BASE = (p) => `http://localhost:3000/${p}`;
+    const $ = (s) => document.querySelector(s);
+
+    let allRisks = [];
+    let allSkills = [];
+    let allMaterials = [];
+    let currentRiskId = null;
+    let currentSkillId = null;
+
+    // ---------- LOAD MASTER DATA ----------
+    async function loadMasterData(){
+      try{
+        const [rRes, sRes, mRes] = await Promise.all([
+          fetch(API_BASE('risk?select=id,code,title&order=code')),
+          fetch(API_BASE('skill?select=id,code,name&order=code')),
+          fetch(API_BASE('training_material?select=id,code,title&order=code'))
+        ]);
+        allRisks = await rRes.json();
+        allSkills = await sRes.json();
+        allMaterials = await mRes.json();
+
+        renderRiskOptions();
+        $('#status').textContent = 'Connected to PostgREST ✓';
+      }catch(e){
+        console.error(e);
+        $('#status').textContent = 'Connection failed: ' + e.message;
+      }
+    }
+
+    function renderRiskOptions(){
+      const sel = $('#riskSelect');
+      sel.innerHTML = '';
+      if(!allRisks.length){
+        sel.innerHTML = '<option value="">(no risks)</option>';
+        return;
+      }
+      allRisks.forEach(r=>{
+        const opt = document.createElement('option');
+        opt.value = r.id;
+        opt.textContent = `${r.code} – ${r.title}`;
+        sel.appendChild(opt);
+      });
+      // keep previous selection if possible
+      if(currentRiskId && allRisks.some(r=>String(r.id)===String(currentRiskId))){
+        sel.value = currentRiskId;
+      }else{
+        currentRiskId = sel.value || null;
+      }
+      if(currentRiskId) loadRiskLinks();
+    }
+
+    // ---------- RISK <-> SKILL LINKS ----------
+    async function loadRiskLinks(){
+      if(!currentRiskId){
+        $('#linkedSkillsInfo').textContent = 'Choose a risk above.';
+        $('#linkedSkillList').innerHTML = '';
+        $('#skillAddSelect').innerHTML = '';
+        $('#skillForMatSelect').innerHTML = '';
+        return;
+      }
+      $('#linkedSkillsInfo').textContent = 'Loading…';
+      $('#linkedSkillList').innerHTML = '';
+
+      try{
+        const res = await fetch(API_BASE(`risk_skill?risk_id=eq.${currentRiskId}`));
+        const links = res.ok ? await res.json() : [];
+        const linkedSkillIds = links.map(l => l.skill_id);
+
+        // render linked skills list with delete buttons
+        if(links.length === 0){
+          $('#linkedSkillsInfo').textContent = 'No skills linked yet.';
+        }else{
+          $('#linkedSkillsInfo').textContent = '';
+        }
+        const ul = $('#linkedSkillList');
+        ul.innerHTML = '';
+        links.forEach(l=>{
+          const skill = allSkills.find(s=>s.id === l.skill_id);
+          const li = document.createElement('li');
+          li.innerHTML = `
+            <div>
+              <span class="pill">${skill ? skill.code : 'Skill ' + l.skill_id}</span>
+              ${skill ? (skill.name || '') : ''}
+            </div>
+          `;
+          const btn = document.createElement('button');
+          btn.textContent = 'Remove';
+          btn.className = 'danger';
+          btn.onclick = () => removeRiskSkillLink(currentRiskId, l.skill_id);
+          li.appendChild(btn);
+          ul.appendChild(li);
+        });
+
+        // options for adding new skill links (only not yet linked)
+        const addSel = $('#skillAddSelect');
+        addSel.innerHTML = '';
+        const availableSkills = allSkills.filter(s => !linkedSkillIds.includes(s.id));
+        if(availableSkills.length === 0){
+          const opt = document.createElement('option');
+          opt.value = '';
+          opt.textContent = '(all skills already linked)';
+          addSel.appendChild(opt);
+        }else{
+          availableSkills.forEach(s=>{
+            const opt = document.createElement('option');
+            opt.value = s.id;
+            opt.textContent = `${s.code} – ${s.name || ''}`;
+            addSel.appendChild(opt);
+          });
+        }
+
+        // skill selector for materials section (use linked skills)
+        const skillMatSel = $('#skillForMatSelect');
+        skillMatSel.innerHTML = '';
+        if(links.length === 0){
+          const opt = document.createElement('option');
+          opt.value = '';
+          opt.textContent = '(no linked skills)';
+          skillMatSel.appendChild(opt);
+          currentSkillId = null;
+          $('#materialList').innerHTML = '';
+          $('#matInfo').textContent = 'Choose a skill above.';
+        }else{
+          links.forEach(l=>{
+            const skill = allSkills.find(s=>s.id === l.skill_id);
+            const opt = document.createElement('option');
+            opt.value = l.skill_id;
+            opt.textContent = `${skill ? skill.code : 'Skill '+l.skill_id} – ${skill ? (skill.name || '') : ''}`;
+            skillMatSel.appendChild(opt);
+          });
+          currentSkillId = skillMatSel.value;
+          loadSkillMaterials();
+        }
+      }catch(e){
+        console.error(e);
+        $('#linkedSkillsInfo').textContent = 'Failed to load links: ' + e.message;
+      }
+    }
+
+    async function addRiskSkillLink(){
+      const skillId = Number($('#skillAddSelect').value);
+      if(!currentRiskId || !skillId) return;
+      try{
+        await fetch(API_BASE('risk_skill'), {
+          method:'POST',
+          headers:{'Content-Type':'application/json','Prefer':'return=minimal'},
+          body: JSON.stringify({risk_id:Number(currentRiskId), skill_id:skillId})
+        });
+        await loadRiskLinks();
+      }catch(e){
+        alert('Failed to add link: '+e.message);
+      }
+    }
+
+    async function removeRiskSkillLink(riskId, skillId){
+      if(!confirm('Remove this Risk–Skill link?')) return;
+      try{
+        await fetch(API_BASE(`risk_skill?risk_id=eq.${riskId}&skill_id=eq.${skillId}`), {
+          method:'DELETE',
+          headers:{'Prefer':'return=minimal'}
+        });
+        // if we removed the skill currently selected in section 3, reset selection
+        if(String(currentSkillId) === String(skillId)){
+          currentSkillId = null;
+        }
+        await loadRiskLinks();
+      }catch(e){
+        alert('Failed to delete link: '+e.message);
+      }
+    }
+
+    // ---------- SKILL <-> MATERIAL LINKS ----------
+    async function loadSkillMaterials(){
+      const info = $('#matInfo');
+      const ul = $('#materialList');
+      ul.innerHTML = '';
+
+      if(!currentSkillId){
+        info.textContent = 'Choose a skill above.';
+        return;
+      }
+
+      info.textContent = 'Loading…';
+      try{
+        const res = await fetch(API_BASE(`skill_training?skill_id=eq.${currentSkillId}`));
+        const links = res.ok ? await res.json() : [];
+        const linkedMatIds = links.map(l => l.training_material_id);
+
+        if(links.length === 0){
+          info.textContent = 'No materials linked to this skill yet.';
+        }else{
+          info.textContent = '';
+        }
+
+        links.forEach(l=>{
+          const m = allMaterials.find(x=>x.id === l.training_material_id);
+          const li = document.createElement('li');
+          li.innerHTML = `
+            <div>
+              <span class="pill">${m ? m.code : 'TM ' + l.training_material_id}</span>
+              ${m ? (m.title || '') : ''}
+            </div>
+          `;
+          const btn = document.createElement('button');
+          btn.textContent = 'Remove';
+          btn.className = 'danger';
+          btn.onclick = () => removeSkillMaterialLink(currentSkillId, l.training_material_id);
+          li.appendChild(btn);
+          ul.appendChild(li);
+        });
+
+        // options for adding new material links
+        const addSel = $('#matAddSelect');
+        addSel.innerHTML = '';
+        const availableMats = allMaterials.filter(m => !linkedMatIds.includes(m.id));
+        if(availableMats.length === 0){
+          const opt = document.createElement('option');
+          opt.value = '';
+          opt.textContent = '(all materials already linked)';
+          addSel.appendChild(opt);
+        }else{
+          availableMats.forEach(m=>{
+            const opt = document.createElement('option');
+            opt.value = m.id;
+            opt.textContent = `${m.code} – ${m.title || ''}`;
+            addSel.appendChild(opt);
+          });
+        }
+      }catch(e){
+        console.error(e);
+        info.textContent = 'Failed to load materials: ' + e.message;
+      }
+    }
+
+    async function addSkillMaterialLink(){
+      if(!currentSkillId) return;
+      const matId = Number($('#matAddSelect').value);
+      if(!matId) return;
+      try{
+        await fetch(API_BASE('skill_training'), {
+          method:'POST',
+          headers:{'Content-Type':'application/json','Prefer':'return=minimal'},
+          body: JSON.stringify({skill_id:Number(currentSkillId), training_material_id:matId})
+        });
+        await loadSkillMaterials();
+      }catch(e){
+        alert('Failed to add material link: '+e.message);
+      }
+    }
+
+    async function removeSkillMaterialLink(skillId, matId){
+      if(!confirm('Remove this Skill–Material link?')) return;
+      try{
+        await fetch(API_BASE(`skill_training?skill_id=eq.${skillId}&training_material_id=eq.${matId}`), {
+          method:'DELETE',
+          headers:{'Prefer':'return=minimal'}
+        });
+        await loadSkillMaterials();
+      }catch(e){
+        alert('Failed to delete material link: '+e.message);
+      }
+    }
+
+    // ---------- EVENT WIRING ----------
+    $('#riskSelect').addEventListener('change', e=>{
+      currentRiskId = e.target.value || null;
+      currentSkillId = null;
+      loadRiskLinks();
+    });
+    $('#skillForMatSelect').addEventListener('change', e=>{
+      currentSkillId = e.target.value || null;
+      loadSkillMaterials();
+    });
+    $('#btnReloadRisks').onclick = loadMasterData;
+    $('#btnAddSkillLink').onclick = addRiskSkillLink;
+    $('#btnAddMaterialLink').onclick = addSkillMaterialLink;
+
+    // initial load
+    loadMasterData();
+      function goBack() {
+    window.location.href = 'simple-interface-prototype-fetch.html';
+  }
+</script>
+</body>
+</html>

@@ -39,9 +39,6 @@
     <button data-tab="materials">Training Materials</button>
     <button data-tab="trace">Traceability</button>
     <button data-tab="checks">Checks & Reports</button>
-    <button onclick="window.location.href='link-editor.html'">
-      Link Editor
-    </button>
   </aside>
 
   <!-- Right content -->
@@ -92,21 +89,6 @@
     </div>
 
     <!-- TRACEABILITY -->
-    <div id="tab-trace" class="hidden">
-      <div class="toolbar">
-        <button onclick="window.open('trace-graph.html', '_blank')">
-          Open graph view
-        </button>
-      </div>
-
-      <div class="muted" style="margin:8px 0">
-        Aggregated from view <code>risk_traceability</code>.
-      </div>
-      <table>
-        <thead><tr><th>Risk</th><th>Title</th><th>Severity</th><th>Skills</th><th>Materials</th></tr></thead>
-        <tbody id="traceRows"><tr><td colspan="5">Loading…</td></tr></tbody>
-      </table>
-    </div>
     <div id="tab-trace" class="hidden">
       <div class="muted" style="margin:8px 0">Aggregated from view <code>risk_traceability</code>.</div>
       <table>
